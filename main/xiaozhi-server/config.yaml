@@ -296,6 +296,11 @@ Memory:
     # https://app.mem0.ai/dashboard/api-keys
     # 每月有1000次免费调用
     api_key: 你的mem0ai api key
+  superbrain_native:
+    # SuperBrain 原生记忆，默认使用当前选中的主LLM进行记忆总结
+    type: superbrain_native
+    # 可选：配置记忆总结专用LLM；留空时使用 selected_module.LLM
+    llm: ""
   powermem:
     # PowerMem是OceanBase开源的agent记忆组件，通过本地LLM进行记忆总结
     # 费用说明：PowerMem本身免费，实际费用取决于所选LLM和数据库

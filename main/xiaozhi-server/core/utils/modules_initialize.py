@@ -6,6 +6,40 @@ TAG = __name__
 logger = setup_logging()
 
 
+def _safe_model_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.lower()
+        if any(key in lowered for key in ("key", "secret", "token", "password")):
+            return "******"
+    return value
+
+
+def _model_summary(config: Dict[str, Any], category: str, module_name: str) -> Dict[str, Any]:
+    module_config = (config.get(category) or {}).get(module_name) or {}
+    summary_keys = (
+        "type",
+        "model_name",
+        "model",
+        "model_id",
+        "base_url",
+        "url",
+        "domain",
+        "llm",
+    )
+
+    return {
+        "category": category,
+        "module": module_name,
+        **{
+            key: _safe_model_value(module_config.get(key))
+            for key in summary_keys
+            if module_config.get(key) not in (None, "")
+        },
+    }
+
+
 def initialize_modules(
     logger,
     config: Dict[str, Any],
@@ -45,7 +79,9 @@ def initialize_modules(
             llm_type,
             config["LLM"][select_llm_module],
         )
-        logger.bind(tag=TAG).info(f"初始化组件: llm成功 {select_llm_module}")
+        logger.bind(tag=TAG).info(
+            f"初始化组件: llm成功 {_model_summary(config, 'LLM', select_llm_module)}"
+        )
 
     # 初始化Intent模块
     if init_intent:
@@ -59,7 +95,9 @@ def initialize_modules(
             intent_type,
             config["Intent"][select_intent_module],
         )
-        logger.bind(tag=TAG).info(f"初始化组件: intent成功 {select_intent_module}")
+        logger.bind(tag=TAG).info(
+            f"初始化组件: intent成功 {_model_summary(config, 'Intent', select_intent_module)}"
+        )
 
     # 初始化Memory模块
     if init_memory:
@@ -74,7 +112,9 @@ def initialize_modules(
             config["Memory"][select_memory_module],
             config.get("summaryMemory", None),
         )
-        logger.bind(tag=TAG).info(f"初始化组件: memory成功 {select_memory_module}")
+        logger.bind(tag=TAG).info(
+            f"初始化组件: memory成功 {_model_summary(config, 'Memory', select_memory_module)}"
+        )
 
     # 初始化VAD模块
     if init_vad:

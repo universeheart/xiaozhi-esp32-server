@@ -47,9 +47,9 @@ async def startToChat(conn: "ConnectionHandler", text):
         if text.strip().startswith("{") and text.strip().endswith("}"):
             data = json.loads(text)
             if "speaker" in data and "content" in data:
-                speaker_name = data["speaker"]
-                language_tag = data["language"]
-                actual_text = data["content"]
+                speaker_name = data.get("speaker")
+                language_tag = data.get("language")
+                actual_text = data.get("content", text)
                 conn.logger.bind(tag=TAG).info(f"解析到说话人信息: {speaker_name}")
 
                 # 直接使用JSON格式的文本，不解析

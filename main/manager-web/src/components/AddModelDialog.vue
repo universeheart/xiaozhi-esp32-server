@@ -78,8 +78,31 @@
         <div v-for="(row, rowIndex) in chunkedCallInfoFields" :key="rowIndex"
           style="display: flex; gap: 20px; margin-bottom: 0;">
           <el-form-item v-for="field in row" :key="field.prop" :label="field.label" :prop="field.prop" style="flex: 1;">
-            <el-input v-model="formData.configJson[field.prop]" :placeholder="field.placeholder"
-              :type="field.type || 'text'" class="custom-input-bg" :show-password="field.type === 'password'">
+            <el-select
+              v-if="field.type === 'llm-select'"
+              v-model="formData.configJson[field.prop]"
+              :placeholder="field.placeholder"
+              class="custom-select custom-input-bg"
+              style="width: 100%;"
+              filterable
+              clearable
+              @focus="loadLlmOptions"
+            >
+              <el-option
+                v-for="item in llmOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+            <el-input
+              v-else
+              v-model="formData.configJson[field.prop]"
+              :placeholder="field.placeholder"
+              :type="field.type || 'text'"
+              class="custom-input-bg"
+              :show-password="field.type === 'password'"
+            >
             </el-input>
           </el-form-item>
         </div>
@@ -108,6 +131,8 @@ export default {
       providers: [],
       dialogVisible: false,
       providersLoaded: false,
+      llmOptions: [],
+      llmOptionsLoaded: false,
       providerFields: [],
       currentProvider: null,
       formData: {
@@ -164,12 +189,32 @@ export default {
           fields: JSON.parse(item.fields || '[]').map(f => ({
             label: f.label,
             prop: f.key,
-            type: f.type === 'password' ? 'password' : 'text',
-            placeholder: `请输入${f.key}`
+            type:
+              f.type === 'llm'
+                ? 'llm-select'
+                : f.type === 'password'
+                  ? 'password'
+                  : 'text',
+            placeholder: f.type === 'llm' ? '默认使用当前选中的主LLM' : `请输入${f.key}`
           }))
         }))
         this.providersLoaded = true
       })
+    },
+    loadLlmOptions() {
+      if (this.llmOptionsLoaded) return;
+
+      Api.model.getLlmModelCodeList('', ({ data }) => {
+        if (data.code === 0) {
+          this.llmOptions = data.data.map(item => ({
+            value: item.id,
+            label: item.modelName
+          }));
+          this.llmOptionsLoaded = true;
+        } else {
+          this.$message.error(data.msg || '获取LLM模型列表失败');
+        }
+      });
     },
     initConfigJson() {
       const defaultConfig = {};
@@ -257,6 +302,8 @@ export default {
       // 重置加载状态
       this.providers = [];
       this.providersLoaded = false;
+      this.llmOptions = [];
+      this.llmOptionsLoaded = false;
       // 重置字段配置
       this.providerFields = [];
       this.currentProvider = null;

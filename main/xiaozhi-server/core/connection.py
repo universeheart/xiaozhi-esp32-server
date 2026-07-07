@@ -193,6 +193,89 @@ class ConnectionHandler:
         # 初始化通话状态
         self.calling = False
 
+    @staticmethod
+    def _model_summary(config: Dict[str, Any], category: str, module_name: str | None):
+        if not module_name:
+            return None
+
+        module_config = (config.get(category) or {}).get(module_name) or {}
+        summary_keys = (
+            "type",
+            "model_name",
+            "model",
+            "model_id",
+            "base_url",
+            "url",
+            "domain",
+            "llm",
+        )
+
+        return {
+            "category": category,
+            "module": module_name,
+            **{
+                key: module_config.get(key)
+                for key in summary_keys
+                if module_config.get(key) not in (None, "")
+            },
+        }
+
+    def _log_device_model_selection(self):
+        selected = self.config.get("selected_module", {})
+        llm_module = selected.get("LLM")
+        slm_module = selected.get("SLM")
+        intent_module = selected.get("Intent")
+        memory_module = selected.get("Memory")
+        vllm_module = selected.get("VLLM")
+
+        intent_config = (self.config.get("Intent") or {}).get(intent_module) or {}
+        memory_config = (self.config.get("Memory") or {}).get(memory_module) or {}
+        intent_llm_module = intent_config.get("llm")
+        memory_llm_module = memory_config.get("llm")
+
+        model_selection = {
+            "device_id": self.headers.get("device-id") if self.headers else self.device_id,
+            "client_id": self.headers.get("client-id", self.headers.get("device-id")) if self.headers else None,
+            "llm": self._model_summary(self.config, "LLM", llm_module),
+            "slm": self._model_summary(self.config, "LLM", slm_module),
+            "intent": self._model_summary(self.config, "Intent", intent_module),
+            "intent_llm": self._model_summary(self.config, "LLM", intent_llm_module),
+            "memory": self._model_summary(self.config, "Memory", memory_module),
+            "memory_llm": self._model_summary(self.config, "LLM", memory_llm_module),
+            "vllm": self._model_summary(self.config, "VLLM", vllm_module),
+        }
+
+        self.logger.bind(tag=TAG).info(
+            f"当前硬件模型选择: {json.dumps(filter_sensitive_info(model_selection), ensure_ascii=False)}"
+        )
+
+    def _log_llm_request_start(self, query: str | None, depth: int, functions_enabled: bool):
+        selected = self.config.get("selected_module", {})
+        llm_module = selected.get("LLM")
+        slm_module = selected.get("SLM")
+        intent_module = selected.get("Intent")
+        intent_config = (self.config.get("Intent") or {}).get(intent_module) or {}
+        intent_llm_module = intent_config.get("llm")
+
+        payload = {
+            "device_id": self.headers.get("device-id") if self.headers else self.device_id,
+            "client_id": self.headers.get("client-id", self.headers.get("device-id")) if self.headers else None,
+            "session_id": self.session_id,
+            "depth": depth,
+            "from_mqtt_gateway": self.conn_from_mqtt_gateway,
+            "functions_enabled": functions_enabled,
+            "intent_type": self.intent_type,
+            "query": query,
+            "llm": self._model_summary(self.config, "LLM", llm_module),
+            "slm": self._model_summary(self.config, "LLM", slm_module),
+            "intent": self._model_summary(self.config, "Intent", intent_module),
+            "intent_llm": self._model_summary(self.config, "LLM", intent_llm_module),
+        }
+
+        self.logger.bind(tag=TAG).info(
+            f"收到硬件语音，开始调用大模型处理: {json.dumps(filter_sensitive_info(payload), ensure_ascii=False)}"
+        )
+
     async def handle_connection(self, ws: websockets.ServerConnection):
         try:
             # 获取运行中的事件循环（必须在异步上下文中）
@@ -736,6 +819,10 @@ class ConnectionHandler:
             self.config["selected_module"]["LLM"] = private_config["selected_module"][
                 "LLM"
             ]
+            if private_config.get("selected_module", {}).get("SLM") is not None:
+                self.config["selected_module"]["SLM"] = private_config["selected_module"][
+                    "SLM"
+                ]
         if private_config.get("VLLM", None) is not None:
             self.config["VLLM"] = private_config["VLLM"]
             self.config["selected_module"]["VLLM"] = private_config["selected_module"][
@@ -776,6 +863,8 @@ class ConnectionHandler:
             self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
         if private_config.get("context_providers", None) is not None:
             self.config["context_providers"] = private_config["context_providers"]
+
+        self._log_device_model_selection()
 
         # 注入替换词到 TTS 模块配置
         if private_config.get("correct_words", None) is not None:
@@ -833,11 +922,11 @@ class ConnectionHandler:
         # 如果使用 nomen 或 mem_report_only，直接返回
         if memory_type == "nomem" or memory_type == "mem_report_only":
             return
-        # 使用 mem_local_short 模式
-        elif memory_type == "mem_local_short":
-            memory_llm_name = memory_config[self.config["selected_module"]["Memory"]][
+        # 使用需要LLM进行总结的记忆模式
+        elif memory_type in ("mem_local_short", "superbrain_native"):
+            memory_llm_name = memory_config[self.config["selected_module"]["Memory"]].get(
                 "llm"
-            ]
+            )
             if memory_llm_name and memory_llm_name in self.config["LLM"]:
                 # 如果配置了专用LLM，则创建独立的LLM实例
                 from core.utils import llm as llm_utils
@@ -854,7 +943,7 @@ class ConnectionHandler:
             else:
                 # 否则使用主LLM
                 self.memory.set_llm(self.llm)
-                self.logger.bind(tag=TAG).info("使用主LLM作为意图识别模型")
+                self.logger.bind(tag=TAG).info("使用主LLM作为记忆总结模型")
 
     def _initialize_intent(self):
         if self.intent is None:
@@ -971,10 +1060,17 @@ class ConnectionHandler:
             memory_str = None
             # 仅当query非空（代表用户询问）时查询记忆
             if self.memory is not None and query:
+                self._ensure_superbrain_memory_ready()
                 future = asyncio.run_coroutine_threadsafe(
                     self.memory.query_memory(query), self.loop
                 )
                 memory_str = future.result()
+
+            self._log_llm_request_start(
+                query,
+                depth,
+                self.intent_type == "function_call" and functions is not None,
+            )
 
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
@@ -1069,7 +1165,10 @@ class ConnectionHandler:
                             )
                         )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
+            error_text = str(e)
+            if len(error_text) > 1200:
+                error_text = error_text[:1200] + "... <truncated>"
+            self.logger.bind(tag=TAG).error(f"LLM stream processing error: {error_text}")
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,
@@ -1157,6 +1256,7 @@ class ConnectionHandler:
                                     content_type=ContentType.ACTION,
                                 )
                             )
+                            self._schedule_superbrain_memory_save()
                         return
 
                     tool_calls_list = real_tool_calls
@@ -1235,6 +1335,7 @@ class ConnectionHandler:
                     content_type=ContentType.ACTION,
                 )
             )
+            self._schedule_superbrain_memory_save()
             # 使用lambda延迟计算，只有在DEBUG级别时才执行get_llm_dialogue()
             self.logger.bind(tag=TAG).debug(
                 lambda: json.dumps(
@@ -1243,6 +1344,52 @@ class ConnectionHandler:
             )
 
         return True
+
+    def _schedule_superbrain_memory_save(self):
+        """回复完成后后台更新SuperBrain记忆，不阻塞TTS和下一轮对话。"""
+        if not self.memory:
+            return
+        memory_module = self.memory.__class__.__module__
+        if "superbrain_native" not in memory_module:
+            return
+        self._ensure_superbrain_memory_ready()
+
+        dialogue_snapshot = copy.deepcopy(self.dialogue.dialogue)
+        session_id_snapshot = self.session_id
+
+        def save_memory_task():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
+                    self.memory.save_memory(dialogue_snapshot, session_id_snapshot)
+                )
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"实时保存SuperBrain记忆失败: {e}")
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=save_memory_task, daemon=True).start()
+
+    def _ensure_superbrain_memory_ready(self):
+        if not self.memory:
+            return
+        memory_module = self.memory.__class__.__module__
+        if "superbrain_native" not in memory_module:
+            return
+        if getattr(self.memory, "role_id", None):
+            return
+        if not self.device_id:
+            return
+        self.memory.init_memory(
+            role_id=self.device_id,
+            llm=self.llm,
+            summary_memory=self.config.get("summaryMemory", None),
+            save_to_file=not self.read_config_from_api,
+        )
 
     def _handle_function_result(self, tool_results, depth, streamed_text=""):
         need_llm_tools = []

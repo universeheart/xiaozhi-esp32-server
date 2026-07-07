@@ -308,7 +308,12 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
      */
     private void validateLlmConfiguration(ModelConfigBodyDTO modelConfigBodyDTO) {
         if (modelConfigBodyDTO.getConfigJson() != null && modelConfigBodyDTO.getConfigJson().containsKey("llm")) {
-            String llm = modelConfigBodyDTO.getConfigJson().get("llm").toString();
+            Object llmValue = modelConfigBodyDTO.getConfigJson().get("llm");
+            String llm = llmValue == null ? "" : llmValue.toString();
+            if (StringUtils.isBlank(llm)) {
+                return;
+            }
+
             ModelConfigEntity modelConfigEntity = modelConfigDao.selectOne(new LambdaQueryWrapper<ModelConfigEntity>()
                     .eq(ModelConfigEntity::getId, llm));
 
@@ -319,15 +324,6 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
             String modelType = modelConfigEntity.getModelType();
             if (modelType == null || !"LLM".equals(modelType.toUpperCase())) {
                 throw new RenException(ErrorCode.LLM_NOT_EXIST);
-            }
-
-            // 验证LLM类型
-            JSONObject configJson = modelConfigEntity.getConfigJson();
-            if (configJson != null && configJson.containsKey("type")) {
-                String type = configJson.get("type").toString();
-                if (!"openai".equals(type) && !"ollama".equals(type)) {
-                    throw new RenException(ErrorCode.INVALID_LLM_TYPE);
-                }
             }
         }
     }

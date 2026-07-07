@@ -1,4 +1,4 @@
-import os, json, uuid
+import os, json, uuid, re, hashlib
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
@@ -89,7 +89,7 @@ class LLMProvider(LLMProviderBase):
         genai.configure(api_key=self.api_key)
 
         # 设置请求超时（秒）
-        self.timeout = cfg.get("timeout", 120)  # 默认120秒
+        # self.timeout = cfg.get("timeout", 120)  # 默认120秒
 
         # 创建模型实例
         self.model = genai.GenerativeModel(self.model_name)
@@ -102,30 +102,94 @@ class LLMProvider(LLMProviderBase):
         )
 
     @staticmethod
-    def _build_tools(funcs: List[Dict[str, Any]] | None):
+    def _safe_function_name(name: str, used_names: set[str]) -> str:
+        safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", str(name or "tool"))
+        if not re.match(r"^[a-zA-Z_]", safe_name):
+            safe_name = f"tool_{safe_name}"
+        safe_name = safe_name[:63] or "tool"
+
+        if safe_name in used_names:
+            suffix = hashlib.md5(str(name).encode("utf-8")).hexdigest()[:8]
+            safe_name = f"{safe_name[:54]}_{suffix}"
+
+        used_names.add(safe_name)
+        return safe_name
+
+    @classmethod
+    def _sanitize_schema(cls, schema: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not isinstance(schema, dict):
+            return {"type": "object", "properties": {}}
+
+        schema_type = str(schema.get("type", "object")).lower()
+        if schema_type not in {"object", "string", "number", "integer", "boolean", "array"}:
+            schema_type = "object"
+
+        cleaned: Dict[str, Any] = {"type": schema_type}
+        if schema.get("description"):
+            cleaned["description"] = str(schema["description"])
+        if schema.get("enum"):
+            cleaned["enum"] = schema["enum"]
+
+        if schema_type == "object":
+            properties = schema.get("properties") or {}
+            cleaned["properties"] = {
+                key: cls._sanitize_schema(value)
+                for key, value in properties.items()
+                if isinstance(value, dict)
+            }
+            required = schema.get("required") or []
+            if isinstance(required, list):
+                cleaned["required"] = [key for key in required if key in cleaned["properties"]]
+        elif schema_type == "array":
+            cleaned["items"] = cls._sanitize_schema(schema.get("items") or {"type": "string"})
+
+        return cleaned
+
+    @classmethod
+    def _build_tools(cls, funcs: List[Dict[str, Any]] | None):
         if not funcs:
-            return None
-        return [
-            types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name=f["function"]["name"],
-                        description=f["function"]["description"],
-                        parameters=f["function"]["parameters"],
-                    )
-                    for f in funcs
-                ]
+            return None, {}
+
+        declarations = []
+        name_map: Dict[str, str] = {}
+        used_names: set[str] = set()
+
+        for item in funcs:
+            func = item.get("function", item)
+            original_name = func.get("name") or item.get("name")
+            if not original_name:
+                continue
+
+            safe_name = cls._safe_function_name(original_name, used_names)
+            name_map[safe_name] = original_name
+            schema = func.get("parameters") or func.get("inputSchema") or item.get("inputSchema")
+
+            declarations.append(
+                types.FunctionDeclaration(
+                    name=safe_name,
+                    description=str(func.get("description", "")),
+                    parameters=cls._sanitize_schema(schema),
+                )
             )
-        ]
+
+        if not declarations:
+            return None, {}
+
+        log.bind(tag=TAG).debug(
+            f"Gemini工具声明已转换: {len(declarations)}个，重命名: "
+            f"{sum(1 for safe, original in name_map.items() if safe != original)}个"
+        )
+        return [types.Tool(function_declarations=declarations)], name_map
 
     # Gemini文档提到，无需维护session-id，直接用dialogue拼接而成
     def response(self, session_id, dialogue, **kwargs):
-        yield from self._generate(dialogue, None)
+        yield from self._generate(dialogue, None, {})
 
     def response_with_functions(self, session_id, dialogue, functions=None):
-        yield from self._generate(dialogue, self._build_tools(functions))
+        tools, name_map = self._build_tools(functions)
+        yield from self._generate(dialogue, tools, name_map)
 
-    def _generate(self, dialogue, tools):
+    def _generate(self, dialogue, tools, tool_name_map=None):
         role_map = {"assistant": "model", "user": "user"}
         contents: list = []
         # 拼接对话
@@ -170,7 +234,7 @@ class LLMProvider(LLMProviderBase):
             generation_config=self.gen_cfg,
             tools=tools,
             stream=True,
-            timeout=self.timeout,
+            # timeout=self.timeout,
         )
 
         try:
@@ -185,7 +249,7 @@ class LLMProvider(LLMProviderBase):
                                 id=uuid.uuid4().hex,
                                 type="function",
                                 function=SimpleNamespace(
-                                    name=fc.name,
+                                    name=(tool_name_map or {}).get(fc.name, fc.name),
                                     arguments=json.dumps(
                                         dict(fc.args), ensure_ascii=False
                                     ),

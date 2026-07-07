@@ -103,6 +103,24 @@
                     "></el-input>
               </template>
 
+              <el-select
+                v-else-if="field.type === 'llm-select'"
+                v-model="form.configJson[field.prop]"
+                :placeholder="field.placeholder"
+                class="custom-select custom-input-bg"
+                style="width: 100%"
+                filterable
+                clearable
+                @focus="loadLlmOptions"
+              >
+                <el-option
+                  v-for="item in llmOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+
               <el-input v-else v-model="form.configJson[field.prop]" :placeholder="field.placeholder" :type="field.type"
                 class="custom-input-bg" :show-password="field.type === 'password'" @focus="
                   isSensitiveField(field.prop)
@@ -146,6 +164,8 @@ export default {
       providersLoaded: false,
       saving: false,
       allProvidersData: null,
+      llmOptions: [],
+      llmOptionsLoaded: false,
       pendingProviderType: null,
       pendingModelData: null,
       dynamicCallInfoFields: [],
@@ -226,6 +246,8 @@ export default {
       this.fieldJsonMap = {};
     },
     resetProviders() {
+      this.llmOptions = [];
+      this.llmOptionsLoaded = false;
       this.providers = [];
       this.providersLoaded = false;
     },
@@ -315,6 +337,21 @@ export default {
         }
       });
     },
+    loadLlmOptions() {
+      if (this.llmOptionsLoaded) return;
+
+      Api.model.getLlmModelCodeList("", ({ data }) => {
+        if (data.code === 0) {
+          this.llmOptions = data.data.map((item) => ({
+            value: item.id,
+            label: item.modelName,
+          }));
+          this.llmOptionsLoaded = true;
+        } else {
+          this.$message.error(data.msg || "获取LLM模型列表失败");
+        }
+      });
+    },
     loadProviderFields(providerCode) {
       if (this.allProvidersData) {
         const provider = this.allProvidersData.find(
@@ -327,10 +364,12 @@ export default {
             type:
               f.type === "dict"
                 ? "json-textarea"
-                : f.type === "password"
-                  ? "password"
-                  : "text",
-            placeholder: `请输入${f.key}`,
+                : f.type === "llm"
+                  ? "llm-select"
+                  : f.type === "password"
+                    ? "password"
+                    : "text",
+            placeholder: f.type === "llm" ? "默认使用当前选中的主LLM" : `请输入${f.key}`,
           }));
 
           if (this.pendingModelData && this.pendingProviderType === providerCode) {

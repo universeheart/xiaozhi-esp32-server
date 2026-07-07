@@ -123,6 +123,11 @@ class ASRProviderBase(ABC):
             else:
                 raw_text, _ = asr_result
 
+            if raw_text is None:
+                logger.bind(tag=TAG).warning("ASR未返回有效文本，跳过本轮语音处理")
+                self.stop_ws_connection()
+                return
+
             if isinstance(voiceprint_result, Exception):
                 logger.bind(tag=TAG).error(f"声纹识别失败: {voiceprint_result}")
                 speaker_name = ""
