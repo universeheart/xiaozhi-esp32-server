@@ -219,6 +219,33 @@ async def generate_and_save_chat_title(session_id: str) -> Optional[Dict]:
         return None
 
 
+async def upsert_memory_profile(profile: Dict) -> Optional[Dict]:
+    """按硬件 MAC 新增或更新长期记忆画像。"""
+    if not ManageApiClient._instance:
+        return None
+    try:
+        return await ManageApiClient._instance._execute_async_request(
+            "POST",
+            "/memory/profile/upsert",
+            json={
+                "macAddress": profile.get("mac_address"),
+                "memberId": profile.get("member_id"),
+                "username": profile.get("username"),
+                "occupation": profile.get("occupation"),
+                "primaryOccupation": profile.get("primary_occupation"),
+                "interests": profile.get("interests"),
+                "favoriteRole": profile.get("favorite_role"),
+                "favoriteTvShow": profile.get("favorite_tv_show"),
+                "chineseName": profile.get("chinese_name"),
+                "englishName": profile.get("english_name"),
+                "profileMd": profile.get("profile_md") or "",
+            },
+        )
+    except Exception as e:
+        print(f"同步长期记忆画像失败: {e}")
+        return None
+
+
 async def report(
     mac_address: str, session_id: str, chat_type: int, content: str, audio, report_time
 ) -> Optional[Dict]:

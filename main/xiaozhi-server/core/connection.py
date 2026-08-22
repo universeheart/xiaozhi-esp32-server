@@ -135,6 +135,19 @@ class ConnectionHandler:
         self._vad = _vad
         self.llm = _llm
         self.memory = _memory
+        # SuperBrain 会在实例上保存 role_id/user_id/目录等设备态数据。服务级共享
+        # 同一个实例会让并发连接互相覆盖这些字段，因此每条连接必须拥有独立实例。
+        if _memory and "superbrain_native" in _memory.__class__.__module__:
+            from core.utils import memory as memory_utils
+
+            memory_name = self.config["selected_module"]["Memory"]
+            memory_config = self.config["Memory"][memory_name]
+            memory_type = memory_config.get("type", memory_name)
+            self.memory = memory_utils.create_instance(
+                memory_type,
+                memory_config,
+                self.config.get("summaryMemory", None),
+            )
         self.intent = _intent
 
         # 为每个连接单独管理声纹识别

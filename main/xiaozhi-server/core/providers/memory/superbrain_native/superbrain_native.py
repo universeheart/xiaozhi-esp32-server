@@ -1,134 +1,88 @@
 from ..base import MemoryProviderBase, logger
+import hashlib
 import json
 import os
 import re
+import threading
 import time
 from typing import Any, Dict, List
 
 from config.config_loader import get_project_dir
-from config.manage_api_client import generate_and_save_chat_summary
+from config.manage_api_client import (
+    generate_and_save_chat_summary,
+    upsert_memory_profile,
+)
 from core.utils.util import check_model_key
 
 TAG = __name__
 
 SUPERBRAIN_FILES = {
     "profile": "profile.md",
-    "working": "working_memory.md",
-    "episodic": "episodic_memory.md",
     "semantic": "semantic_memory.json",
     "procedural": "procedural_memory.md",
-    "relations": "relationship_graph.json",
     "index": "memory_index.json",
     "operations": "operation_log.jsonl",
 }
 
+MONTHLY_FILES = {
+    "episodic": "episodic_memory.md",
+    "relations": "relationship_graph.md",
+}
+
+DAILY_FILES = {"working": "working_memory.json"}
+
+# v1曾将所有层级都放在用户根目录，保留这些名称用于无损迁移。
+LEGACY_FILES = {
+    "working": "working_memory.md",
+    "episodic": "episodic_memory.md",
+    "relations": "relationship_graph.json",
+}
+
 DEFAULT_MARKDOWN = {
     "profile": "",
-    "working": "",
-    "episodic": "",
     "procedural": "",
 }
 
+DEFAULT_WORKING_MEMORY = {
+    "active_tasks": [],
+    "pending_confirmations": [],
+    "open_topics": [],
+    "recent_dialogues": [],
+}
+
 superbrain_memory_prompt = """
-# SuperBrain 记忆中枢
+你是 SuperBrain 长期记忆分析器。输入只属于当前硬件用户。深入分析连续对话，提炼对未来交流长期有价值的事实，并输出更新后的完整用户画像。
 
-你是后台记忆整理器，不是聊天助手。你的任务是根据“现有记忆”和“最新对话”，为同一个用户维护一个可长期演进的个人 Wiki 记忆库。为了确保记忆的时效性和权重管理，记忆将被映射到不同的时间维度的文件目录中。
-
-## 核心目标
-- 捕捉对未来对话有帮助的中长期信息，并按时间权重进行路由分发。
-- 将新信息严格按“短期（日）”、“中期（月）”、“长期（全局）”的目录结构分类归档，保留稳定事实、偏好、关系、项目、流程习惯和待跟进事项。
-- 如果新信息修正旧信息，保留旧信息的历史痕迹并标记为 stale，不要直接删除。
-- 忽略一次性寒暄、临时情绪、无后续价值的普通闲聊。
-- 极度关注核心身份特征：用户本人及其提及的家人、亲戚、好友、同事的名字、职业、婚姻状况、工作与子女信息，这些必须被视为高优先级长期记忆。
-
-## 记忆分层与存储架构
-你的输出将被后端系统物理持久化到用户 ID 下的不同目录中，请根据以下架构理解记忆的时效与权重：
-
-### 1. 长期记忆 (Long-term / 根目录)
-这些信息伴随用户的整个生命周期，权重最高，存放于用户目录根节点：
-- **profile.md (画像记忆)**：提炼用户的身份、喜好、关注领域、居住地、祖籍、婚姻状况、父母（及配偶父母）、是否有孩子等个人信息。必须同时记录关系极近的亲朋好友的身份、职业、子女等重要情报。**绝对不可编造或写入推测性误解信息。**
-- **procedural_memory.md (流程记忆)**：记录用户的工作习惯、固定工作流、表达偏好、格式要求、决策习惯、协作方式及语言习惯。
-- **semantic_memories (语义节点)**：跨会话的稳定事实（实体、工具、产品、长期目标等），以结构化数据存在。
-
-### 2. 中期记忆 (Mid-term / 月份子目录 `YYYY-MM/`)
-这些信息在当前时间段内权重极高，但随着事件结束或时间推移会被逐步归档降权：
-- **episodic_memory.md (情景记忆)**：按时间倒序或分段沉淀的会话摘要、阶段性事件、中短期项目推进记录。避免流水账。
-- **relationship_graph.md (关系图谱)**：实体、人物、项目之间的关联脉络（如“用户-开发-项目A”）。随月份演进记录当月的核心社交与事物关系网络。
-
-### 3. 短期记忆 (Short-term / 日期子目录 `YYYY-MM-DD/`)
-- **working_memory.json (工作记忆)**：当前、近2周至1个月内的短期上下文、尚未完成的临时任务、每日琐碎安排、待确认事项或未完结的话题。过期内容应被你清空，或提取有价值部分升级合并到中期/长期记忆中。
-
-## 记忆评估
-每次更新必须同时考虑：
-- **时效路由**：信息是该放入今日的 working memory，还是沉淀到当月的 episodic，或是永久写入根目录的 profile。
-- **情感强度**：用户是否反复强调、明确偏好、强烈满意或不满（此类多入档长期记忆）。
-- **关联密度**：是否能和已有实体、项目、习惯、长期目标建立连接。
-
-## 更新规则
-1. 只记录用户明确表达或可稳定推断的信息，**严禁任何形式的编造**。
-2. `profile_md` 和 `procedural_md` 必须维护一份结构清晰的完整 Markdown 快照。
-3. `episodic_md` 采用精炼的要点总结，关注“事件进展”而非“聊天记录”。
-4. `working_memory_json` 只保留当下依然活跃的临时事项，一旦判断任务结束或话题失去时效性，立即从该字段中剔除。
-
-## 输出要求
-只输出一个 JSON 对象，不要 Markdown 代码块包裹（或确保可以被标准 JSON 解析器解析），不要解释处理过程。所有字段必须输出“更新后的完整快照”，不要只给增量。
-
-JSON Schema 结构如下（后端将根据 Key 自动路由保存至对应目录）：
+提炼姓名、称呼、职业、主要职业、居住地、祖籍、婚姻、子女、亲友关系、稳定偏好、长期目标、工作流程、表达习惯、常用工具和重要经历。
+只记录用户明确说出或现有画像已确认的事实；助手回复不能作为事实来源。保留未被否定的旧信息，新信息纠正旧信息时以新信息为准。忽略寒暄、一次性问题、临时情绪和系统错误。
+profile_md 汇总全部长期信息并使用结构清晰的 Markdown；其他字段填写对应精炼值，没有可靠内容时为 null。interests 可用逗号分隔。
+所有字段名必须与 memory_profile 数据库列名完全一致。只能输出一个标准 JSON 对象，不要代码围栏、解释、注释或外层包装。
 
 {
-  "should_update": true,
-  "memory_operation": "none | ingest | supersede | reinforce | crystallize",
-  "reason": "简述判断需要或不需要更新的依据",
-  
-  "//_ROOT_DIRECTORY_//": "以下字段将保存至用户根目录",
-  "profile_md": "用户及亲友画像完整快照，Markdown 文本",
-  "procedural_md": "工作与表达习惯记忆完整快照，Markdown 文本",
-  "semantic_memories": [
-    {
-      "entity": "实体名称",
-      "type": "person | project | preference | fact | goal | task | tool | other",
-      "content": "可注入提示词的简洁事实",
-      "status": "active | stale",
-      "confidence": 0.0,
-      "updated_at": "YYYY-MM-DD HH:mm:ss",
-      "evidence": "来自本轮或历史对话的依据",
-      "supersedes": "被取代的旧实体信息"
-    }
-  ],
-
-  "//_MONTHLY_DIRECTORY_//": "以下字段将保存至当月目录 [YYYY-MM]",
-  "episodic_md": "情景记忆与项目进度完整快照，Markdown 文本",
-  "relationship_graph_md": "实体及人物关系图谱，Markdown 文本（建议使用列表或 Mermaid 语法表达关系）",
-
-  "//_DAILY_DIRECTORY_//": "以下字段将保存至当日目录 [YYYY-MM-DD]",
-  "working_memory_json": {
-    "active_tasks": ["短期任务1", "短期任务2"],
-    "pending_confirmations": ["待确认事项1"],
-    "open_topics": ["未聊完的上下文段落摘要"]
-  },
-
-  "operations_log": [
-    {
-      "operation": "ingest | supersede | reinforce | crystallize",
-      "tier": "working | episodic | semantic | procedural | profile",
-      "entity": "实体或事件名称",
-      "confidence_change": "+0.1",
-      "reason": "执行原因，例如：将过期的短期任务归档至情景记忆"
-    }
-  ]
+  "mac_address": "当前用户ID",
+  "member_id": null,
+  "username": null,
+  "occupation": null,
+  "primary_occupation": null,
+  "interests": null,
+  "favorite_role": null,
+  "favorite_tv_show": null,
+  "chinese_name": null,
+  "english_name": null,
+  "profile_md": "完整的长期用户画像 Markdown"
 }
 """
 
 superbrain_query_prompt = """
-你是 SuperBrain 记忆检索器。请从用户的记忆库中挑选与当前用户消息最相关、最应该注入回复提示词的内容。
+你是只读的 SuperBrain 记忆检索器。输入中的用户记忆库只属于当前设备用户。
 
-要求：
-- 加载对应用户的中长期记忆(profile, relationship_graph, semantic, working etc.)，并从log里读取最近五条记录帮助短期记忆的衔接
-- 只返回对本轮回复有帮助的记忆。
-- 保留用户偏好、项目背景、流程习惯、待跟进事项。
-- 忽略无关或过时内容，除非过时信息能解释当前上下文。
-- 输出简洁中文项目符号，不要 JSON，不要解释检索过程。
-- 如果没有相关记忆，返回空字符串。
+严格规则：
+1. 只能引用记忆库中明确存在且与当前消息直接相关的事实；不得猜测或使用模型自身记忆补全。
+2. 不得把其他用户、外部摘要、示例文字或系统说明混入结果。
+3. operation_log 只帮助判断更新时间；错误原因、校验信息和“未结构化会话”等系统诊断不是用户事实，禁止返回。
+4. 优先级：未完成事项 > 明确身份与称呼 > 稳定偏好/关系/项目 > 历史事件。
+5. status=stale、已过期或无关内容不返回。
+6. 只输出最多 8 条简洁中文项目符号，不要标题、JSON或解释；没有可靠相关记忆时输出空字符串。
 """
 
 
@@ -183,6 +137,19 @@ def _as_list(value: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _as_working_memory(value: Any) -> Dict[str, List[str]]:
+    result = {key: [] for key in DEFAULT_WORKING_MEMORY}
+    if not isinstance(value, dict):
+        return result
+    for key in result:
+        items = value.get(key, [])
+        if isinstance(items, list):
+            result[key] = [str(item).strip() for item in items if str(item).strip()]
+        elif items is not None and str(items).strip():
+            result[key] = [str(items).strip()]
+    return result
+
+
 class MemoryProvider(MemoryProviderBase):
     def __init__(self, config, summary_memory=None):
         super().__init__(config)
@@ -192,6 +159,8 @@ class MemoryProvider(MemoryProviderBase):
         self.user_id = None
         self.user_memory_dir = None
         self.bootstrap_summary_memory = summary_memory or ""
+        self._save_lock = threading.Lock()
+        self._last_saved_dialogue_hash = None
 
     def init_memory(self, role_id, llm, summary_memory=None, save_to_file=True, **kwargs):
         super().init_memory(role_id, llm, **kwargs)
@@ -200,7 +169,6 @@ class MemoryProvider(MemoryProviderBase):
         self.user_id = self._safe_user_id(role_id)
         self.user_memory_dir = self._resolve_user_memory_dir(self.user_id)
         self._ensure_user_memory_dir()
-        self._bootstrap_summary()
         self.load_memory()
 
     def _safe_user_id(self, user_id) -> str:
@@ -258,7 +226,7 @@ class MemoryProvider(MemoryProviderBase):
                 continue
             if key in DEFAULT_MARKDOWN:
                 self._write_text(path, DEFAULT_MARKDOWN[key])
-            elif key in ("semantic", "relations"):
+            elif key == "semantic":
                 self._write_json(path, [])
             elif key == "index":
                 self._write_json(
@@ -267,15 +235,86 @@ class MemoryProvider(MemoryProviderBase):
                         "user_id": self.user_id,
                         "created_at": self._now(),
                         "updated_at": self._now(),
-                        "memory_version": "superbrain_native.v1",
+                        "memory_version": "superbrain_native.v2",
                     },
                 )
             elif key == "operations":
                 self._write_text(path, "")
 
+        month_dir = self._month_dir()
+        day_dir = self._day_dir()
+        os.makedirs(month_dir, exist_ok=True)
+        os.makedirs(day_dir, exist_ok=True)
+        for filename in MONTHLY_FILES.values():
+            path = os.path.join(month_dir, filename)
+            if not os.path.exists(path):
+                self._write_text(path, "")
+        working_path = os.path.join(day_dir, DAILY_FILES["working"])
+        if not os.path.exists(working_path):
+            self._write_json(working_path, DEFAULT_WORKING_MEMORY)
+        self._migrate_legacy_layout()
+
     def _path(self, key: str) -> str:
         self._ensure_user_memory_dir()
         return os.path.join(self.user_memory_dir, SUPERBRAIN_FILES[key])
+
+    def _month_key(self, timestamp=None) -> str:
+        return time.strftime("%Y-%m", time.localtime(timestamp))
+
+    def _day_key(self, timestamp=None) -> str:
+        return time.strftime("%Y-%m-%d", time.localtime(timestamp))
+
+    def _month_dir(self, month=None) -> str:
+        return os.path.join(self.user_memory_dir, month or self._month_key())
+
+    def _day_dir(self, day=None) -> str:
+        return os.path.join(self.user_memory_dir, day or self._day_key())
+
+    def _monthly_path(self, key: str, month=None) -> str:
+        return os.path.join(self._month_dir(month), MONTHLY_FILES[key])
+
+    def _daily_path(self, key: str, day=None) -> str:
+        return os.path.join(self._day_dir(day), DAILY_FILES[key])
+
+    def _migrate_legacy_layout(self):
+        """Copy v1 root-level memories into the current v2 period directories once."""
+        if not self.user_memory_dir:
+            return
+        index_path = os.path.join(self.user_memory_dir, SUPERBRAIN_FILES["index"])
+        index = self._read_json(index_path, {})
+        if index.get("legacy_layout_migrated"):
+            return
+        episodic_target = self._monthly_path("episodic")
+        relations_target = self._monthly_path("relations")
+        working_target = self._daily_path("working")
+
+        legacy_episode = os.path.join(self.user_memory_dir, LEGACY_FILES["episodic"])
+        if not self._read_text(episodic_target).strip() and os.path.exists(legacy_episode):
+            self._write_text(episodic_target, self._read_text(legacy_episode).strip())
+
+        legacy_relations = os.path.join(self.user_memory_dir, LEGACY_FILES["relations"])
+        if not self._read_text(relations_target).strip() and os.path.exists(legacy_relations):
+            relations = self._read_json(legacy_relations, [])
+            self._write_text(relations_target, _as_markdown(relations))
+
+        legacy_working = os.path.join(self.user_memory_dir, LEGACY_FILES["working"])
+        current_working = self._read_json(working_target, DEFAULT_WORKING_MEMORY)
+        if (
+            current_working == DEFAULT_WORKING_MEMORY
+            and os.path.exists(legacy_working)
+            and self._read_text(legacy_working).strip()
+        ):
+            migrated = dict(DEFAULT_WORKING_MEMORY)
+            migrated["open_topics"] = [self._read_text(legacy_working).strip()]
+            self._write_json(working_target, migrated)
+        index.update(
+            {
+                "memory_version": "superbrain_native.v2",
+                "legacy_layout_migrated": True,
+                "legacy_layout_migrated_at": self._now(),
+            }
+        )
+        self._write_json(index_path, index)
 
     def _now(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -314,6 +353,19 @@ class MemoryProvider(MemoryProviderBase):
                 "exists": os.path.exists(path),
                 "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
             }
+        for key in MONTHLY_FILES:
+            path = self._monthly_path(key)
+            files[f"monthly_{key}"] = {
+                "path": path,
+                "exists": os.path.exists(path),
+                "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+            }
+        path = self._daily_path("working")
+        files["daily_working"] = {
+            "path": path,
+            "exists": os.path.exists(path),
+            "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+        }
         return {
             "user_id": self.user_id,
             "role_id": self.role_id,
@@ -352,37 +404,26 @@ class MemoryProvider(MemoryProviderBase):
                 )
 
     def _bootstrap_summary(self):
-        if not self.bootstrap_summary_memory:
-            return
-        episodic_path = self._path("episodic")
-        current = self._read_text(episodic_path).strip()
-        if current:
-            return
-        imported = (
-            f"## 外部摘要导入 - {self._now()}\n"
-            f"{self.bootstrap_summary_memory.strip()}\n"
-        )
-        self._write_text(episodic_path, imported)
+        # summaryMemory没有设备归属证明，禁止写入按MAC隔离的SuperBrain目录。
+        return
 
     def load_memory(self, summary_memory=None):
-        if summary_memory:
-            self.bootstrap_summary_memory = summary_memory
         if not self.role_id:
-            self.memory_text = self.bootstrap_summary_memory or ""
+            self.memory_text = ""
             return
         self._ensure_user_memory_dir()
-        self._bootstrap_summary()
         self.memory_text = self._compose_memory_context(include_working=True)
 
     def _load_sections(self) -> Dict[str, Any]:
         self._ensure_user_memory_dir()
+        monthly = self._load_period_memories(MONTHLY_FILES, limit=6)
+        daily = self._load_period_memories(DAILY_FILES, limit=30, json_keys={"working"})
         sections = {
             "profile": self._read_text(self._path("profile")).strip(),
-            "working": self._read_text(self._path("working")).strip(),
-            "episodic": self._read_text(self._path("episodic")).strip(),
             "semantic": self._read_json(self._path("semantic"), []),
             "procedural": self._read_text(self._path("procedural")).strip(),
-            "relations": self._read_json(self._path("relations"), []),
+            "monthly": monthly,
+            "daily": daily,
             "recent_operations": self._read_recent_operations(limit=5),
         }
         logger.bind(tag=TAG).debug(
@@ -392,11 +433,10 @@ class MemoryProvider(MemoryProviderBase):
                     **self._memory_file_debug_info(),
                     "loaded": {
                         "profile_chars": len(sections["profile"]),
-                        "working_chars": len(sections["working"]),
-                        "episodic_chars": len(sections["episodic"]),
                         "semantic_count": len(sections["semantic"]),
                         "procedural_chars": len(sections["procedural"]),
-                        "relations_count": len(sections["relations"]),
+                        "monthly_period_count": len(sections["monthly"]),
+                        "daily_period_count": len(sections["daily"]),
                         "recent_operations_count": len(sections["recent_operations"]),
                     },
                 },
@@ -404,6 +444,60 @@ class MemoryProvider(MemoryProviderBase):
             )
         )
         return sections
+
+    def _load_period_memories(
+        self, file_map: Dict[str, str], limit: int, json_keys=None
+    ) -> List[Dict[str, Any]]:
+        """Load newest dated directories without mixing snapshots across tiers."""
+        json_keys = json_keys or set()
+        if not self.user_memory_dir or not os.path.isdir(self.user_memory_dir):
+            return []
+        if file_map is MONTHLY_FILES:
+            pattern = re.compile(r"^\d{4}-\d{2}$")
+            date_format = "%Y-%m"
+            max_age_days = 190
+        else:
+            pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+            date_format = "%Y-%m-%d"
+            max_age_days = 31
+        now = time.time()
+
+        def is_recent_period(name: str) -> bool:
+            try:
+                period_time = time.mktime(time.strptime(name, date_format))
+                age_days = (now - period_time) / 86400
+                return -1 <= age_days <= max_age_days
+            except ValueError:
+                return False
+
+        period_names = sorted(
+            (
+                name
+                for name in os.listdir(self.user_memory_dir)
+                if pattern.match(name)
+                and is_recent_period(name)
+                and os.path.isdir(os.path.join(self.user_memory_dir, name))
+            ),
+            reverse=True,
+        )[:limit]
+        result = []
+        for period in period_names:
+            values = {"period": period}
+            has_content = False
+            for key, filename in file_map.items():
+                path = os.path.join(self.user_memory_dir, period, filename)
+                if key in json_keys:
+                    value = self._read_json(path, DEFAULT_WORKING_MEMORY)
+                    if value != DEFAULT_WORKING_MEMORY:
+                        has_content = True
+                else:
+                    value = self._read_text(path).strip()
+                    if value:
+                        has_content = True
+                values[key] = value
+            if has_content:
+                result.append(values)
+        return result
 
     def _read_recent_operations(self, limit=5) -> List[Dict[str, Any]]:
         path = self._path("operations")
@@ -428,10 +522,16 @@ class MemoryProvider(MemoryProviderBase):
         parts = []
         if sections["profile"]:
             parts.append(f"## 用户画像\n{sections['profile']}")
-        if include_working and sections["working"]:
-            parts.append(f"## 工作记忆\n{sections['working']}")
-        if sections["episodic"]:
-            parts.append(f"## 情景记忆\n{sections['episodic']}")
+        if include_working and sections["daily"]:
+            parts.append(
+                "## 短期记忆（日目录，按日期倒序）\n"
+                + json.dumps(sections["daily"], ensure_ascii=False, indent=2)
+            )
+        if sections["monthly"]:
+            parts.append(
+                "## 中期记忆（月目录，按月份倒序）\n"
+                + json.dumps(sections["monthly"], ensure_ascii=False, indent=2)
+            )
         if sections["semantic"]:
             parts.append(
                 "## 语义记忆\n"
@@ -439,11 +539,6 @@ class MemoryProvider(MemoryProviderBase):
             )
         if sections["procedural"]:
             parts.append(f"## 流程习惯记忆\n{sections['procedural']}")
-        if sections["relations"]:
-            parts.append(
-                "## 关系图谱\n"
-                + json.dumps(sections["relations"], ensure_ascii=False, indent=2)
-            )
         if sections["recent_operations"]:
             parts.append(
                 "## 最近记忆操作\n"
@@ -465,64 +560,101 @@ class MemoryProvider(MemoryProviderBase):
                 lines.append(f"Assistant: {content}")
         return "\n".join(lines)
 
-    def _fallback_append_episode(self, dialogue_text: str, reason: str):
-        if not dialogue_text:
+    def _record_dialogue_snapshots(self, msgs):
+        """Persist short/mid-term conversation history without relying on LLM JSON."""
+        latest = []
+        seen_assistant = False
+        for msg in reversed(msgs):
+            if msg.role not in ("user", "assistant"):
+                continue
+            content = _extract_content(msg.content)
+            if not content:
+                continue
+            if msg.role == "assistant" and not seen_assistant:
+                latest.append(f"Assistant: {content}")
+                seen_assistant = True
+            elif msg.role == "user" and seen_assistant:
+                latest.append(f"User: {content}")
+                break
+        if len(latest) < 2:
             return
-        path = self._path("episodic")
-        current = self._read_text(path).strip()
-        entry = (
-            f"## 未结构化会话记录 - {self._now()}\n"
-            f"原因：{reason}\n"
-            f"{dialogue_text[-2000:]}\n"
-        )
-        self._write_text(path, f"{entry}\n\n{current}".strip())
-        self._append_operation_log(
-            [
-                {
-                    "operation": "ingest",
-                    "tier": "episodic",
-                    "entity": "未结构化会话",
-                    "confidence_change": "unknown",
-                    "reason": reason,
-                }
-            ],
-            reason,
-        )
+        excerpt = "\n".join(reversed(latest))[-2000:].strip()
+        daily_path = self._daily_path("working")
+        working = self._read_json(daily_path, DEFAULT_WORKING_MEMORY)
+        working = _as_working_memory(working)
+        recent = working.setdefault("recent_dialogues", [])
+        if not recent or recent[-1] != excerpt:
+            recent.append(excerpt)
+        working["recent_dialogues"] = recent[-20:]
+        self._write_json(daily_path, working)
 
-    def _apply_memory_update(self, payload: Dict[str, Any]):
-        should_update = payload.get("should_update", True)
-        reason = str(payload.get("reason", "")).strip()
-        if should_update is False:
-            self._append_operation_log([], reason)
-            return
+        monthly_path = self._monthly_path("episodic")
+        current = self._read_text(monthly_path).strip()
+        entry = f"## 对话记录 - {self._now()}\n{excerpt}"
+        if entry not in current:
+            self._write_text(monthly_path, f"{entry}\n\n{current}".strip())
 
-        self._write_text(self._path("profile"), _as_markdown(payload.get("profile_md")))
-        self._write_text(self._path("working"), _as_markdown(payload.get("working_md")))
-        self._write_text(self._path("episodic"), _as_markdown(payload.get("episodic_md")))
-        self._write_text(
-            self._path("procedural"), _as_markdown(payload.get("procedural_md"))
-        )
+    def _apply_profile_update(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist the complete long-term profile returned by the memory LLM."""
+        existing = self._read_json(self._path("semantic"), {})
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.setdefault("profile_md", self._read_text(self._path("profile")).strip())
 
-        semantic_memories = _as_list(payload.get("semantic_memories"))
-        relationship_graph = _as_list(payload.get("relationship_graph"))
-        self._write_json(self._path("semantic"), semantic_memories)
-        self._write_json(self._path("relations"), relationship_graph)
+        def updated_value(key):
+            value = payload.get(key)
+            value = value if value not in (None, "") else existing.get(key)
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value if str(item).strip()) or None
+            if isinstance(value, dict):
+                return json.dumps(value, ensure_ascii=False)
+            return str(value).strip() if value not in (None, "") else None
 
+        profile = {
+            "mac_address": str(self.role_id),
+            "member_id": updated_value("member_id"),
+            "username": updated_value("username"),
+            "occupation": updated_value("occupation"),
+            "primary_occupation": updated_value("primary_occupation"),
+            "interests": updated_value("interests"),
+            "favorite_role": updated_value("favorite_role"),
+            "favorite_tv_show": updated_value("favorite_tv_show"),
+            "chinese_name": updated_value("chinese_name"),
+            "english_name": updated_value("english_name"),
+            "profile_md": _as_markdown(updated_value("profile_md")),
+        }
+        if profile["profile_md"]:
+            self._write_text(self._path("profile"), profile["profile_md"])
+        self._write_json(self._path("semantic"), profile)
         index = self._read_json(self._path("index"), {})
-        index.update(
-            {
-                "user_id": self.user_id,
-                "updated_at": self._now(),
-                "memory_version": "superbrain_native.v1",
-                "semantic_count": len(semantic_memories),
-                "relationship_count": len(relationship_graph),
-                "last_operation": payload.get("memory_operation", "none"),
-            }
-        )
+        index.update({
+            "user_id": self.user_id,
+            "updated_at": self._now(),
+            "memory_version": "superbrain_native.v3",
+            "current_month": self._month_key(),
+            "current_day": self._day_key(),
+            "last_operation": "profile_upsert",
+        })
         self._write_json(self._path("index"), index)
-        self._append_operation_log(_as_list(payload.get("operations")), reason)
+        return profile
 
     async def save_memory(self, msgs, session_id=None):
+        # 同一设备连续回复可能启动多个后台保存线程，串行化可避免旧快照后写覆盖新快照。
+        with self._save_lock:
+            dialogue_text = self._build_dialogue_text(msgs)
+            dialogue_hash = hashlib.sha256(dialogue_text.encode("utf-8")).hexdigest()
+            if dialogue_text and dialogue_hash == self._last_saved_dialogue_hash:
+                logger.bind(tag=TAG).debug(
+                    f"跳过重复SuperBrain快照 - User: {self.user_id}, Session: {session_id}"
+                )
+                return self.memory_text
+            result = await self._save_memory_locked(msgs, session_id)
+            if dialogue_text:
+                # 即使模型失败，_save_memory_locked也已将原始对话写入中期保底记录。
+                self._last_saved_dialogue_hash = dialogue_hash
+            return result
+
+    async def _save_memory_locked(self, msgs, session_id=None):
         model_info = getattr(
             self.llm, "model_name", self.llm.__class__.__name__ if self.llm else "未设置"
         )
@@ -544,13 +676,19 @@ class MemoryProvider(MemoryProviderBase):
         dialogue_text = self._build_dialogue_text(msgs)
         if not dialogue_text:
             return self.memory_text
+        self._record_dialogue_snapshots(msgs)
 
-        current_memory = self._compose_memory_context(include_working=True)
+        current_profile = self._read_json(self._path("semantic"), {})
+        if not isinstance(current_profile, dict):
+            current_profile = {}
+        current_profile_md = self._read_text(self._path("profile")).strip()
         time_str = self._now()
         llm_input = (
-            f"当前用户ID：{self.user_id}\n"
+            f"当前用户ID（mac_address）：{self.role_id}\n"
             f"当前时间：{time_str}\n\n"
-            f"# 现有记忆\n{current_memory or '无'}\n\n"
+            "# 现有长期画像JSON\n"
+            f"{json.dumps(current_profile, ensure_ascii=False, indent=2)}\n\n"
+            f"# 现有profile_md\n{current_profile_md or '无'}\n\n"
             f"# 最新对话\n{dialogue_text}"
         )
 
@@ -558,20 +696,22 @@ class MemoryProvider(MemoryProviderBase):
             result = self.llm.response_no_stream(
                 superbrain_memory_prompt,
                 llm_input,
-                max_tokens=3500,
+                max_tokens=2200,
                 temperature=0.1,
+                response_format={"type": "json_object"},
             )
             payload = _extract_json_payload(result)
             if not payload:
-                raise ValueError("SuperBrain LLM未返回有效JSON")
-            self._apply_memory_update(payload)
+                raise ValueError("SuperBrain LLM未返回长期画像JSON")
+            profile = self._apply_profile_update(payload)
+            if profile["profile_md"]:
+                await upsert_memory_profile(profile)
             self.memory_text = self._compose_memory_context(include_working=True)
             logger.bind(tag=TAG).info(
                 f"SuperBrain memory saved - User: {self.user_id}, Session: {session_id}"
             )
         except Exception as e:
             logger.bind(tag=TAG).error(f"Error in saving SuperBrain memory: {e}")
-            self._fallback_append_episode(dialogue_text, str(e))
             self.memory_text = self._compose_memory_context(include_working=True)
 
         if not self.save_to_file:

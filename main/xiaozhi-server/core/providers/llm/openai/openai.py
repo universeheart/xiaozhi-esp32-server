@@ -103,6 +103,7 @@ class LLMProvider(LLMProviderBase):
             "temperature": kwargs.get("temperature", self.temperature),
             "top_p": kwargs.get("top_p", self.top_p),
             "frequency_penalty": kwargs.get("frequency_penalty", self.frequency_penalty),
+            "response_format": kwargs.get("response_format"),
         }
 
         for key, value in optional_params.items():
