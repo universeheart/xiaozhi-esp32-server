@@ -1,0 +1,7 @@
+# Raw test artifacts are local by default. Commit only Markdown summaries.
+*
+!.gitignore
+!README.md
+!*/
+!**/*.md
+
