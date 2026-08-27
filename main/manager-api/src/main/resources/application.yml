@@ -32,7 +32,7 @@ knife4j:
   basic:
     enable: false
     username: admin
-    password: admin
+    password: ${KNIFE4J_BASIC_PASSWORD:}
   setting:
     enableFooter: false
 

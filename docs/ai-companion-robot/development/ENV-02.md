@@ -7,7 +7,7 @@
 
 ## 决策
 
-- 四个完整仓库统一位于 `D:\CodexWorking\AI陪伴机器人\Projects`。
+- 四个完整仓库现统一位于 `D:\CodexWorking\AICompanionRobot\Projects`。此前的 `D:\CodexWorking\AI陪伴机器人\Projects` 为旧路径历史记录，已不再作为开发基线。
 - 服务端和 Android 为实际开发仓；ESP32 与 Python 仓主要用于协议/行为参考和测试。
 - Codex 在这些工作副本中修改与测试，用户自行审查并手动 commit。
 - `D:\Projects\ProjectRobot` 下原仓保持不动，不作为后续代码修改目标。
@@ -35,4 +35,3 @@
 4. 原路径未修改：PASS。
 
 结论：后续可以在新工作副本开始构建、测试和代码修改。
-
