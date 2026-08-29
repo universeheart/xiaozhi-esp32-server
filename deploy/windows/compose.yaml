@@ -1,0 +1,103 @@
+name: xiaozhi
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-xiaozhi_esp32_server}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [xiaozhi-net]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    networks: [xiaozhi-net]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '$${REDIS_PASSWORD}' ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  manager-api:
+    image: ${IMAGE_PREFIX:-xiaozhi-custom}/manager-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SPRING_DATASOURCE_DRUID_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-xiaozhi_esp32_server}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true
+      SPRING_DATASOURCE_DRUID_USERNAME: root
+      SPRING_DATASOURCE_DRUID_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["--server.port=8002"]
+    volumes:
+      # Java resolves the relative "uploadfile" directory from /app.
+      - upload-data:/app/uploadfile
+    networks: [xiaozhi-net]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/8002'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  manager-web:
+    image: ${IMAGE_PREFIX:-xiaozhi-custom}/manager-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${MANAGER_WEB_PORT:-8002}:80"
+    networks: [xiaozhi-net]
+    depends_on:
+      manager-api:
+        condition: service_healthy
+
+  xiaozhi-server:
+    image: ${IMAGE_PREFIX:-xiaozhi-custom}/server:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      NO_PROXY: localhost,127.0.0.1,::1,manager-api,mysql,redis
+      no_proxy: localhost,127.0.0.1,::1,manager-api,mysql,redis
+    ports:
+      - "${XIAOZHI_WS_PORT:-8000}:8000"
+      - "${XIAOZHI_HTTP_PORT:-8003}:8003"
+    volumes:
+      - ./data:/opt/xiaozhi-esp32-server/data
+    networks: [xiaozhi-net]
+    depends_on:
+      manager-api:
+        condition: service_healthy
+    security_opt:
+      - seccomp:unconfined
+
+networks:
+  xiaozhi-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  upload-data:

@@ -1,7 +1,15 @@
 .git
-__pycache__
+**/__pycache__
 *.pyc
+**/.venv
+**/node_modules
+**/target
+**/dist
+.DS_Store
+**/.DS_Store
 .env
 Dockerfile
 tmp/
-data/
+**/tmp/
+**/logs/
+main/xiaozhi-server/data/

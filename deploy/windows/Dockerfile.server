@@ -1,0 +1,17 @@
+FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
+
+WORKDIR /opt/xiaozhi-esp32-server
+
+# Reinstall from the checked-out requirements file so dependencies added by
+# secondary development are present even when the upstream base image is old.
+COPY main/xiaozhi-server/requirements.txt /tmp/xiaozhi-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/xiaozhi-requirements.txt \
+    && rm -f /tmp/xiaozhi-requirements.txt
+
+# This copies the current working tree, including every local Python change and
+# the model assets that are not excluded by the repository .dockerignore.
+COPY main/xiaozhi-server/ ./
+
+EXPOSE 8000 8003
+
+CMD ["python", "app.py"]
