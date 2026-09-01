@@ -136,6 +136,24 @@ docker save -o deploy/windows/xiaozhi-windows-amd64-20260829.tar \
 - `deploy/windows/compose.yaml`
 - `deploy/windows/.env.example`
 - `main/xiaozhi-server/config_from_api.yaml`
+- `deploy/windows/deploy.ps1`
+
+如果使用一键构建生成的 release 目录，上述文件已经全部包含。复制整个目录到 Windows Server 后，建议直接以管理员 PowerShell 运行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\deploy.ps1
+```
+
+脚本会自动执行下面第 4～7 节中可自动化的步骤，包括创建 `.env` 和随机密码、复制 `data\.config.yaml`、加载镜像、启动管理端、写入 `server.secret`、启动全部服务、开放防火墙及输出验证日志。首次注册管理员仍需在浏览器完成，脚本会在需要输入 `server.secret` 时暂停。
+
+脚本同时兼容新版 `docker compose` 和 Windows 上独立安装的 `docker-compose.exe`，运行时会自动检测并选择可用命令。
+
+如已提前取得 secret，可直接传入；`PublicHost` 用于生成视觉接口地址：
+
+```powershell
+.\deploy.ps1 -ServerSecret "你的server.secret" -PublicHost "192.168.1.20"
+```
 
 ## 4. Windows Server 初始化
 

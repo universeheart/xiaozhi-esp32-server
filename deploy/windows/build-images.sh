@@ -148,6 +148,10 @@ cp "${COMPOSE_FILE}" "${RELEASE_DIR}/compose.yaml"
 cp "${ENV_FILE}" "${RELEASE_DIR}/.env.example"
 cp "${SCRIPT_DIR}/README.md" "${RELEASE_DIR}/DEPLOYMENT.md"
 cp "${PROJECT_ROOT}/main/xiaozhi-server/config_from_api.yaml" "${RELEASE_DIR}/config_from_api.yaml"
+cp "${SCRIPT_DIR}/deploy.ps1" "${RELEASE_DIR}/deploy.ps1"
+cp "${PROJECT_ROOT}/deploy/linux/deploy.sh" "${RELEASE_DIR}/deploy-linux.sh"
+cp "${PROJECT_ROOT}/deploy/linux/README.md" "${RELEASE_DIR}/DEPLOYMENT-LINUX.md"
+chmod +x "${RELEASE_DIR}/deploy-linux.sh"
 
 # Keep the generated environment template synchronized with the actual build.
 sed -i.bak \
@@ -170,5 +174,5 @@ printf '\nBuild completed successfully.\n'
 printf 'Release directory: %s\n' "${RELEASE_DIR}"
 printf 'Image tag: %s\n' "${IMAGE_TAG}"
 if ((SKIP_EXPORT == 0)); then
-  printf 'Copy the entire release directory to Windows Server, then follow DEPLOYMENT.md.\n'
+  printf 'Copy the entire release directory to the target server, then follow DEPLOYMENT.md or DEPLOYMENT-LINUX.md.\n'
 fi
