@@ -30,6 +30,7 @@
 
         <result column="chatHistoryConf" property="chatHistoryConf"/>
         <result column="systemPrompt" property="systemPrompt"/>
+        <result column="additionalPrompt" property="additionalPrompt"/>
         <result column="summaryMemory" property="summaryMemory"/>
         <result column="langCode" property="langCode"/>
         <result column="language" property="language"/>
@@ -73,6 +74,7 @@
                )                   AS functions,
                a.chat_history_conf AS chatHistoryConf,
                a.system_prompt     AS systemPrompt,
+               a.additional_prompt AS additionalPrompt,
                a.summary_memory    AS summaryMemory,
                a.lang_code         AS langCode,
                a.language          AS language,
@@ -84,4 +86,4 @@
         FROM ai_agent a
         WHERE a.id = #{agentId}
     </select>
-</mapper> 
+</mapper>

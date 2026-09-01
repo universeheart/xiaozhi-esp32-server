@@ -227,8 +227,18 @@ class PromptManager:
         self, user_prompt: str, device_id: str, client_ip: str = None, *args, **kwargs
     ) -> str:
         """构建增强的系统提示词"""
+        additional_prompt = self.config.get("additional_prompt", "") or ""
+        # 新版 manager-api 已把个性特色合并进 prompt。仅在旧版 API 尚未合并时
+        # 由 Python 兜底，避免混合版本部署时丢失或重复注入。
+        prompt_has_additional = "<additional_instructions" in (user_prompt or "")
+        template_additional_prompt = "" if prompt_has_additional else additional_prompt
         if not self.base_prompt_template:
-            return user_prompt
+            if not template_additional_prompt:
+                return user_prompt
+            return (
+                f"{user_prompt}\n\n<additional_instructions>\n"
+                f"{template_additional_prompt}\n</additional_instructions>"
+            )
 
         try:
             # 获取最新的时间信息（不缓存）
@@ -264,6 +274,7 @@ class PromptManager:
             template = Template(self.base_prompt_template)
             enhanced_prompt = template.render(
                 base_prompt=user_prompt,
+                additional_prompt=template_additional_prompt,
                 current_time="{{current_time}}",
                 today_date=today_date,
                 today_weekday=today_weekday,

@@ -69,6 +69,9 @@ public class AgentUpdateDTO implements Serializable {
     @Schema(description = "角色设定参数", example = "你是一个专业的客服助手，负责回答用户问题并提供帮助", nullable = true)
     private String systemPrompt;
 
+    @Schema(description = "角色个性特色，每次请求大语言模型时注入系统提示词", nullable = true)
+    private String additionalPrompt;
+
     @Schema(description = "总结记忆", example = "构建可生长的动态记忆网络，在有限空间内保留关键信息的同时，智能维护信息演变轨迹\n"
             + "根据对话记录，总结user的重要信息，以便在未来的对话中提供更个性化的服务", nullable = true)
     private String summaryMemory;

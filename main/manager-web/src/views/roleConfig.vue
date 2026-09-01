@@ -129,6 +129,22 @@
 
                     <el-form-item>
                       <template #label>
+                        <el-tooltip :content="$t('roleConfig.tooltip.additionalPrompt')" placement="top" effect="light" popper-class="custom-tooltip">
+                          <span>{{ $t('roleConfig.additionalPrompt') }}：</span>
+                        </el-tooltip>
+                      </template>
+                      <el-input
+                        type="textarea"
+                        rows="10"
+                        resize="vertical"
+                        :placeholder="$t('roleConfig.additionalPromptPlaceholder')"
+                        v-model="form.additionalPrompt"
+                        class="form-textarea"
+                      />
+                    </el-form-item>
+
+                    <el-form-item>
+                      <template #label>
                         <el-tooltip :content="$t('roleConfig.tooltip.memoryHis')" placement="top" effect="light" popper-class="custom-tooltip">
                           <span>{{ $t('roleConfig.memoryHis') }}：</span>
                         </el-tooltip>
@@ -497,6 +513,7 @@ export default {
         ttsPitch: null,
         chatHistoryConf: 0,
         systemPrompt: "",
+        additionalPrompt: "",
         summaryMemory: "",
         langCode: "",
         language: "",
@@ -578,6 +595,7 @@ export default {
         memModelId: this.form.model.memModelId,
         intentModelId: this.form.model.intentModelId,
         systemPrompt: this.form.systemPrompt,
+        additionalPrompt: this.form.additionalPrompt,
         summaryMemory: this.form.summaryMemory,
         langCode: this.form.langCode,
         language: this.form.language,
@@ -630,6 +648,7 @@ export default {
             ttsVoiceId: "",
             chatHistoryConf: 0,
             systemPrompt: "",
+            additionalPrompt: "",
             summaryMemory: "",
             langCode: "",
             language: "",

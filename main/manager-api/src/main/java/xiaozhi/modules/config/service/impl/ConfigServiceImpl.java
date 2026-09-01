@@ -96,6 +96,7 @@ public class ConfigServiceImpl implements ConfigService {
                 null,
                 null,
                 null,
+                null,
                 agent.getVadModelId(),
                 agent.getAsrModelId(),
                 null,
@@ -224,6 +225,7 @@ public class ConfigServiceImpl implements ConfigService {
         buildModuleConfig(
                 agent.getAgentName(),
                 agent.getSystemPrompt(),
+                agent.getAdditionalPrompt(),
                 agent.getSummaryMemory(),
                 voice,
                 referenceAudio,
@@ -418,6 +420,7 @@ public class ConfigServiceImpl implements ConfigService {
     private void buildModuleConfig(
             String assistantName,
             String prompt,
+            String additionalPrompt,
             String summaryMemory,
             String voice,
             String referenceAudio,
@@ -548,7 +551,18 @@ public class ConfigServiceImpl implements ConfigService {
         if (StringUtils.isNotBlank(prompt)) {
             prompt = prompt.replace("{{assistant_name}}", StringUtils.isBlank(assistantName) ? "小智" : assistantName);
         }
+        // 在 API 层生成可直接使用的最终提示词，避免不同版本的 Python 服务或
+        // agent-base-prompt.txt 尚未支持 additional_prompt 时丢失附加指令。
+        if (StringUtils.isNotBlank(additionalPrompt)) {
+            String additionalBlock = "<additional_instructions priority=\"high\">\n"
+                    + additionalPrompt.trim()
+                    + "\n</additional_instructions>";
+            prompt = StringUtils.isBlank(prompt)
+                    ? additionalBlock
+                    : prompt.stripTrailing() + "\n\n" + additionalBlock;
+        }
         result.put("prompt", prompt);
+        result.put("additional_prompt", additionalPrompt);
         result.put("summaryMemory", summaryMemory);
     }
 }

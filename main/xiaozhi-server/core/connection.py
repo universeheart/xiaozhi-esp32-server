@@ -863,6 +863,12 @@ class ConnectionHandler:
                 ] = plugin_from_server.keys()
         if private_config.get("prompt", None) is not None:
             self.config["prompt"] = private_config["prompt"]
+        if private_config.get("additional_prompt", None) is not None:
+            self.config["additional_prompt"] = private_config["additional_prompt"]
+            self.logger.bind(tag=TAG).info(
+                "已加载角色附个人特色，长度: "
+                f"{len(private_config['additional_prompt'])}"
+            )
         # 获取声纹信息
         if private_config.get("voiceprint", None) is not None:
             self.config["voiceprint"] = private_config["voiceprint"]
