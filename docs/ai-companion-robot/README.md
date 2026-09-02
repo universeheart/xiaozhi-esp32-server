@@ -38,5 +38,5 @@ docs/ai-companion-robot/
 - SuperBrain 第一批 10 个离线回归测试通过；MySQL 8.4/Liquibase 空库、重复启动和旧画像升级迁移演练通过。
 - Android 构建基线已在英文根路径直接复验通过，无需临时盘符映射。
 - `SEC-01` 代码整改和脱敏扫描已完成；开发期天气共享 Key/本地数据库配置风险已由用户接受，生产前必须复审。
-- G1 已开始；Android PCM/Opus 连续分帧和 WebSocket 显式连接状态机已完成，当前下一任务为 `NET-02` 可靠重连。
+- G1 已开始；Android PCM/Opus 分帧、可靠网络和有界轮次播放队列已完成，当前下一任务为 `TURN-02` 原子中断。
 - 长期记忆更新评估见 [UPD-01](development/UPD-01-服务端更新评估.md)。
