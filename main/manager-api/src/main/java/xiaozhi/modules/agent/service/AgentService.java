@@ -101,5 +101,7 @@ public interface AgentService extends BaseService<AgentEntity> {
      */
     String createAgent(AgentCreateDTO dto);
 
+    String createAgentForUser(AgentCreateDTO dto, Long userId);
+
 
 }

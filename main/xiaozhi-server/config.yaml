@@ -218,6 +218,12 @@ prompt: |
 # 默认系统提示词模板文件
 prompt_template: agent-base-prompt.txt
 
+# 出厂二维码验签。生产环境必须通过私密配置覆盖 qr_secret，且不得写入二维码或客户端。
+hardware_activation:
+  qr_secret: "你的硬件二维码HMAC密钥"
+  qr_max_age_seconds: 600
+  memory_root: ".superbrain_mem"
+
 # 系统错误时的回复
 system_error_response: "主人，小智现在有点忙，我们稍后再试吧。"
 

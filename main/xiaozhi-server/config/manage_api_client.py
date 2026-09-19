@@ -276,6 +276,27 @@ async def lookup_address_book(caller_mac: str, nickname: str) -> Optional[Dict]:
     """根据昵称查找目标设备"""
     if not ManageApiClient._instance:
         return None
+
+
+async def activate_hardware(payload: Dict) -> Optional[Dict]:
+    """Activate a manufacturer-verified hardware unit atomically in manager-api."""
+    return await ManageApiClient._instance._execute_async_request(
+        "POST", "/hardware/lifecycle/activate", json=payload
+    )
+
+
+async def verify_hardware(payload: Dict) -> Optional[Dict]:
+    """Check the signed unit against the factory registry."""
+    return await ManageApiClient._instance._execute_async_request(
+        "POST", "/hardware/lifecycle/verify", json=payload
+    )
+
+
+async def unbind_hardware(payload: Dict) -> Optional[Dict]:
+    """Unbind a hardware unit and purge its server-side personal data."""
+    return await ManageApiClient._instance._execute_async_request(
+        "POST", "/hardware/lifecycle/unbind", json=payload
+    )
     try:
         return await ManageApiClient._instance._execute_async_request(
             "GET",

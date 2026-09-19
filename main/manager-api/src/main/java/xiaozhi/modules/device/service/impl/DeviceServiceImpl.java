@@ -101,6 +101,15 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
 
     @Override
     public Boolean deviceActivation(String agentId, String activationCode) {
+        UserDetail user = SecurityUser.getUser();
+        if (user.getId() == null) {
+            throw new RenException(ErrorCode.USER_NOT_LOGIN);
+        }
+        return deviceActivationForUser(agentId, activationCode, user.getId(), null);
+    }
+
+    @Override
+    public Boolean deviceActivationForUser(String agentId, String activationCode, Long userId, String expectedMacAddress) {
         if (StringUtils.isBlank(activationCode)) {
             throw new RenException(ErrorCode.ACTIVATION_CODE_EMPTY);
         }
@@ -126,12 +135,11 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         }
 
         String macAddress = (String) cacheMap.get("mac_address");
+        if (StringUtils.isNotBlank(expectedMacAddress) && !expectedMacAddress.equalsIgnoreCase(macAddress)) {
+            throw new RenException(ErrorCode.HARDWARE_ACTIVATION_INVALID);
+        }
         String board = (String) cacheMap.get("board");
         String appVersion = (String) cacheMap.get("app_version");
-        UserDetail user = SecurityUser.getUser();
-        if (user.getId() == null) {
-            throw new RenException(ErrorCode.USER_NOT_LOGIN);
-        }
 
         Date currentTime = new Date();
         DeviceEntity deviceEntity = new DeviceEntity();
@@ -140,11 +148,11 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         deviceEntity.setAgentId(agentId);
         deviceEntity.setAppVersion(appVersion);
         deviceEntity.setMacAddress(macAddress);
-        deviceEntity.setUserId(user.getId());
-        deviceEntity.setCreator(user.getId());
+        deviceEntity.setUserId(userId);
+        deviceEntity.setCreator(userId);
         deviceEntity.setAutoUpdate(1);
         deviceEntity.setCreateDate(currentTime);
-        deviceEntity.setUpdater(user.getId());
+        deviceEntity.setUpdater(userId);
         deviceEntity.setUpdateDate(currentTime);
         deviceEntity.setLastConnectedAt(currentTime);
         deviceDao.insert(deviceEntity);

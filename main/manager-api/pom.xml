@@ -32,6 +32,7 @@
         <liquibase-core.version>4.20.0</liquibase-core.version>
         <aliyun-sms-version>4.1.0</aliyun-sms-version>
         <okio-version>3.4.0</okio-version>
+        <lombok.version>1.18.42</lombok.version>
         <!-- Existing integration tests require external services; override with -DskipTests=false. -->
         <skipTests>true</skipTests>
     </properties>
@@ -222,6 +223,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
             <optional>true</optional>
         </dependency>
         <dependency>

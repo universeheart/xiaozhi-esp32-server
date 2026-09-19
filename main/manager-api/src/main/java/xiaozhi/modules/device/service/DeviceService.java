@@ -45,6 +45,8 @@ public interface DeviceService extends BaseService<DeviceEntity> {
      */
     Boolean deviceActivation(String agentId, String activationCode);
 
+    Boolean deviceActivationForUser(String agentId, String activationCode, Long userId, String expectedMacAddress);
+
     /**
      * 删除此用户的所有设备
      * 
