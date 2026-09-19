@@ -19,6 +19,9 @@ public interface SysUserService extends BaseService<SysUserEntity> {
 
     void save(SysUserDTO dto);
 
+    /** Creates an end-user account and never grants manager super-admin privileges. */
+    void saveMobileAccount(SysUserDTO dto);
+
     /**
      * 删除指定用户，且有关联的数据设备和智能体
      * 

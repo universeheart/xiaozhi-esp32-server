@@ -95,6 +95,19 @@ public class SysUserServiceImpl extends BaseServiceImpl<SysUserDao, SysUserEntit
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void saveMobileAccount(SysUserDTO dto) {
+        SysUserEntity entity = ConvertUtils.sourceToTarget(dto, SysUserEntity.class);
+        if (!isStrongPassword(entity.getPassword())) {
+            throw new RenException(ErrorCode.PASSWORD_WEAK_ERROR);
+        }
+        entity.setPassword(PasswordUtils.encode(entity.getPassword()));
+        entity.setSuperAdmin(SuperAdminEnum.NO.value());
+        entity.setStatus(1);
+        insert(entity);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void deleteById(Long id) {
         // 删除用户
         baseDao.deleteById(id);

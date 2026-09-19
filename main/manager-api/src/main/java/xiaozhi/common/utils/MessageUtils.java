@@ -18,8 +18,11 @@ public class MessageUtils {
     public static String getMessage(int code, String... params) {
         if (messageSource == null) {
             // 延迟初始化，确保Spring上下文已完全初始化
+            if (SpringContextUtils.applicationContext == null) {
+                return String.valueOf(code);
+            }
             messageSource = (MessageSource) SpringContextUtils.getBean("messageSource");
         }
-        return messageSource.getMessage(code + "", params, LocaleContextHolder.getLocale());
+        return messageSource.getMessage(code + "", params, code + "", LocaleContextHolder.getLocale());
     }
 }
